@@ -1,34 +1,51 @@
 import os
 import cv2
 import numpy as np
+import tensorflow as tf
 
-def load_dataset(path, img_size=224, max_samples=None):
+class AgeDataGenerator(tf.keras.utils.Sequence):
+    def __init__(self, image_paths, labels, batch_size=32, img_size=224, shuffle=True):
+        self.image_paths = np.array(image_paths)
+        self.labels = np.array(labels)
+        self.batch_size = batch_size
+        self.img_size = img_size
+        self.shuffle = shuffle
+        self.indices = np.arange(len(self.image_paths))
+        if self.shuffle:
+            np.random.shuffle(self.indices)
 
-    images = []
-    labels = []
+    def __len__(self):
+        return int(np.ceil(len(self.image_paths) / self.batch_size))
 
-    files = os.listdir(path)
-    if max_samples:
-        files = files[:max_samples]
+    def __getitem__(self, idx):
+        batch_indices = self.indices[idx * self.batch_size : (idx + 1) * self.batch_size]
+        batch_paths = self.image_paths[batch_indices]
+        batch_labels = self.labels[batch_indices]
 
-    for file in files:
+        X, y = [], []
+        for path, label in zip(batch_paths, batch_labels):
+            img = cv2.imread(path)
+            if img is not None:
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) 
+                img = cv2.resize(img, (self.img_size, self.img_size))
+                X.append(img / 255.0)
+                y.append(label)
+            
+        return np.array(X), np.array(y)
+
+    def on_epoch_end(self):
+        if self.shuffle:
+            np.random.shuffle(self.indices)
+
+def load_dataset(path):
+    image_paths, labels = [], []
+    for file in os.listdir(path):
         try:
-            # Lấy tuổi từ tên tệp tin (ví dụ: 25_0_1_...)
             age = int(file.split('_')[0])
             img_path = os.path.join(path, file)
-            
-            # Chỉ thêm vào nếu tệp tồn tại và là ảnh
             if os.path.isfile(img_path):
-                img = cv2.imread(img_path)
-                if img is not None:
-                    # Tiền xử lý ảnh đồng bộ với file dự đoán (predict.py và cam.py) sử dụng không gian màu BGR
-                    img = cv2.resize(img, (img_size, img_size))
-                    img = img.astype(np.float32) / 255.0
-                    
-                    images.append(img)
-                    # Chuẩn hóa tuổi về [0, 1]
-                    labels.append(age / 100.0)
+                image_paths.append(img_path)
+                labels.append(age / 100.0)
         except:
             continue
-
-    return np.array(images), np.array(labels)
+    return np.array(image_paths), np.array(labels)

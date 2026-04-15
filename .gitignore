@@ -104,7 +104,7 @@ venv.bak/
 
 # Deep Learning specific
 data/
-datasets/
+dataset/
 models/
 checkpoints/
 *.pth
