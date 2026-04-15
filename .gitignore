@@ -87,6 +87,7 @@ ipython_config.py
 # .python-version
 
 # environments
+.venv_312
 .env
 .venv
 env/
@@ -116,3 +117,5 @@ runs/
 logs/
 wandb/
 .tensorboard/
+test/
+#
