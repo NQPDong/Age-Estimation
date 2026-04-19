@@ -7,7 +7,7 @@ from sklearn.model_selection import train_test_split
 # Đường dẫn tuyệt đối dựa trên vị trí file evaluate.py
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATASET_PATH = os.path.join(BASE_DIR, "dataset", "UTKFace")
-MODEL_PATH = os.path.join(BASE_DIR, "models", "age_model.h5")
+MODEL_PATH = os.path.join(BASE_DIR, "models", "best_resnet_age_model.h5")
 
 X,y = load_dataset(DATASET_PATH)
 

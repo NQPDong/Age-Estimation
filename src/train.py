@@ -11,7 +11,7 @@ from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLRO
 
 import matplotlib.pyplot as plt
 
-# Đường dẫn tuyệt đối dựa trên vị trí file train.py
+# Đường dẫn tuyệt đối 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATASET_PATH = os.path.join(BASE_DIR, "dataset", "UTKFace")
 MODEL_DIR = os.path.join(BASE_DIR, "models")
@@ -44,12 +44,12 @@ val_gen = AgeDataGenerator(X_test, y_test, batch_size=32, shuffle=False)
 
 early_stop = EarlyStopping(
     monitor="val_loss",
-    patience=8,
+    patience=5,
     restore_best_weights=True
 )
 
 checkpoint = ModelCheckpoint(
-    os.path.join(MODEL_DIR, "best_age_model.h5"),
+    os.path.join(MODEL_DIR, "best_resnet_age_model.h5"),
     save_best_only=True
 )
 
@@ -63,13 +63,13 @@ reduce_lr = ReduceLROnPlateau(
 
 history = model.fit(
     train_gen,
-    epochs=30,
+    epochs=50,
     validation_data=val_gen,
     callbacks=[early_stop, checkpoint, reduce_lr]
 )
 
 # save final model
-model.save(os.path.join(MODEL_DIR, "age_model.h5"))
+model.save(os.path.join(MODEL_DIR, "last_resnet_age_model.h5"))
 
 # plot training curve
 plt.plot(history.history['loss'])

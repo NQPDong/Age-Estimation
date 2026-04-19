@@ -6,7 +6,7 @@ from tensorflow.keras.models import load_model
 
 # Đường dẫn tuyệt đối dựa trên vị trí file cam.py
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(BASE_DIR, "models", "best_age_model.h5")
+MODEL_PATH = os.path.join(BASE_DIR, "models", "best_resnet_age_model.h5")
 
 IMG_SIZE = 224  # Đồng bộ với kích thước model đã huấn luyện
 
