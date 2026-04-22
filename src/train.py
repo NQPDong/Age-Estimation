@@ -39,7 +39,7 @@ model.compile(
 
 model.summary()
 
-train_gen = AgeDataGenerator(X_train, y_train, batch_size=32)
+train_gen = AgeDataGenerator(X_train, y_train, batch_size=32, augment=True)
 val_gen = AgeDataGenerator(X_test, y_test, batch_size=32, shuffle=False)
 
 early_stop = EarlyStopping(

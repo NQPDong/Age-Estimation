@@ -5,12 +5,13 @@ import tensorflow as tf
 from tensorflow.keras.applications.resnet50 import preprocess_input
 
 class AgeDataGenerator(tf.keras.utils.Sequence):
-    def __init__(self, image_paths, labels, batch_size=32, img_size=224, shuffle=True):
+    def __init__(self, image_paths, labels, batch_size=32, img_size=224, shuffle=True, augment=False):
         self.image_paths = np.array(image_paths)
         self.labels = np.array(labels)
         self.batch_size = batch_size
         self.img_size = img_size
         self.shuffle = shuffle
+        self.augment = augment
         self.indices = np.arange(len(self.image_paths))
         if self.shuffle:
             np.random.shuffle(self.indices)
@@ -32,8 +33,18 @@ class AgeDataGenerator(tf.keras.utils.Sequence):
                 # 2. Resize
                 img = cv2.resize(img, (self.img_size, self.img_size))
                 
-                # 3. KẾT HỢP ƯU ĐIỂM CỦA NHÓM: Dùng hàm preprocess_input riêng của ResNet50
-                # thay vì img / 255.0
+                # Data Augmentation (Tăng cường dữ liệu)
+                if self.augment:
+                    # Lật ngang ngẫu nhiên
+                    if np.random.rand() > 0.5:
+                        img = cv2.flip(img, 1)
+                    
+                    # Thay đổi độ sáng ngẫu nhiên
+                    if np.random.rand() > 0.5:
+                        factor = np.random.uniform(0.7, 1.3)
+                        # Đảm bảo giá trị pixel nằm trong [0, 255] sau khi nhân
+                        img = np.clip(img * factor, 0, 255).astype(np.uint8)
+                # Dùng hàm preprocess_input riêng của ResNet50
                 img = preprocess_input(img)
                 
                 X.append(img)

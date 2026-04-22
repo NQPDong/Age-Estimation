@@ -55,4 +55,4 @@ def predict_age(img_path):
 
 # ===== RUN =====
 if __name__ == "__main__":
-    predict_age(r"D:\deeplearning\deeplearning\test\z7725229821477_14bdc36abb8e88a2418ed669ffc7a323.jpg")
+    predict_age(r"D:\deeplearning\deeplearning\test\105_1_0_20170112213507183.jpg.chip.jpg")
