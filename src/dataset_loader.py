@@ -4,6 +4,33 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras.applications.resnet50 import preprocess_input
 
+# Định nghĩa các nhóm tuổi
+AGE_GROUPS = {
+    0: "0-2 Em bé",
+    1: "3-12 Trẻ em",
+    2: "13-18 Vị thành niên",
+    3: "19-35 Thanh niên",
+    4: "36-55 Trung niên",
+    5: "55+ Người cao tuổi",
+}
+
+NUM_CLASSES = len(AGE_GROUPS)
+
+def age_to_group(age):
+    """Chuyển tuổi thành chỉ số nhóm tuổi (0-5)."""
+    if age <= 2:
+        return 0
+    elif age <= 12:
+        return 1
+    elif age <= 18:
+        return 2
+    elif age <= 35:
+        return 3
+    elif age <= 55:
+        return 4
+    else:
+        return 5
+
 class AgeDataGenerator(tf.keras.utils.Sequence):
     def __init__(self, image_paths, labels, batch_size=32, img_size=224, shuffle=True, augment=False):
         self.image_paths = np.array(image_paths)
@@ -42,16 +69,42 @@ class AgeDataGenerator(tf.keras.utils.Sequence):
                     # Thay đổi độ sáng ngẫu nhiên
                     if np.random.rand() > 0.5:
                         factor = np.random.uniform(0.7, 1.3)
-                        # Đảm bảo giá trị pixel nằm trong [0, 255] sau khi nhân
                         img = np.clip(img * factor, 0, 255).astype(np.uint8)
+
+                    # Xoay ảnh ngẫu nhiên (-15 đến 15 độ)
+                    if np.random.rand() > 0.5:
+                        angle = np.random.uniform(-15, 15)
+                        h, w = img.shape[:2]
+                        M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
+                        img = cv2.warpAffine(img, M, (w, h), borderMode=cv2.BORDER_REFLECT_101)
+
+                    # Zoom ngẫu nhiên (phóng to/thu nhỏ 0.85x - 1.15x)
+                    if np.random.rand() > 0.5:
+                        scale = np.random.uniform(0.85, 1.15)
+                        h, w = img.shape[:2]
+                        new_h, new_w = int(h * scale), int(w * scale)
+                        img = cv2.resize(img, (new_w, new_h))
+                        # Cắt hoặc pad lại về kích thước gốc
+                        if scale > 1.0:
+                            # Cắt phần trung tâm
+                            start_y = (new_h - h) // 2
+                            start_x = (new_w - w) // 2
+                            img = img[start_y:start_y + h, start_x:start_x + w]
+                        else:
+                            # Pad viền bằng reflect
+                            pad_y = (h - new_h) // 2
+                            pad_x = (w - new_w) // 2
+                            img = cv2.copyMakeBorder(
+                                img, pad_y, h - new_h - pad_y, pad_x, w - new_w - pad_x,
+                                cv2.BORDER_REFLECT_101
+                            )
                 # Dùng hàm preprocess_input riêng của ResNet50
                 img = preprocess_input(img)
                 
                 X.append(img)
                 y.append(label)
             
-        # Đưa về kiểu float32 để đồng bộ và tính toán nhanh hơn
-        return np.array(X, dtype="float32"), np.array(y, dtype="float32")
+        return np.array(X, dtype="float32"), np.array(y, dtype="int32")
 
     def on_epoch_end(self):
         if self.shuffle:
@@ -65,9 +118,8 @@ def load_dataset(path):
             img_path = os.path.join(path, file)
             if os.path.isfile(img_path):
                 image_paths.append(img_path)
-                
-                # KẾT HỢP ƯU ĐIỂM CỦA NHÓM: Chia 116.0 (số tuổi cao nhất trong UTKFace)
-                labels.append(age / 116.0) 
+                # Chuyển tuổi thành chỉ số nhóm tuổi (0-5)
+                labels.append(age_to_group(age))
         except:
             continue
             

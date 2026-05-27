@@ -119,3 +119,4 @@ wandb/
 .tensorboard/
 test/
 #
+.agents/rules/antigravity-rtk-rules.md
