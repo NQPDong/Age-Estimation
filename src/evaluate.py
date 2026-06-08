@@ -1,113 +1,94 @@
 import os
+import torch
 import numpy as np
 import matplotlib.pyplot as plt
-
-from dataset_loader import load_dataset, AgeDataGenerator, AGE_GROUPS, NUM_CLASSES
-from tensorflow.keras.models import load_model
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay, roc_curve, auc
 from sklearn.preprocessing import label_binarize
+from sklearn.model_selection import train_test_split
+from tqdm import tqdm
 
-# Đường dẫn tuyệt đối dựa trên vị trí file evaluate.py
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATASET_PATH = os.path.join(BASE_DIR, "dataset", "UTKFace")
-MODEL_PATH = os.path.join(BASE_DIR, "models", "best_resnet_age_model.h5")
-RESULTS_DIR = os.path.join(BASE_DIR, "results")
+from config import DATASET_PATH, CLEANED_PATH, MODEL_DIR, RESULTS_DIR, DEVICE, NUM_CLASSES, AGE_GROUPS
+from dataset_loader import filter_and_detect_faces, UTKFaceDataset, get_transforms
+from model import build_model
 
-os.makedirs(RESULTS_DIR, exist_ok=True)
+def evaluate_model():
+    model_path = os.path.join(MODEL_DIR, 'best_resnet50_utkface.pth')
+    if not os.path.exists(model_path):
+        print("Không tìm thấy model checkpoint. Vui lòng train trước.")
+        return
 
-X,y = load_dataset(DATASET_PATH)
+    all_files = filter_and_detect_faces(DATASET_PATH, CLEANED_PATH)
+    _, val_files = train_test_split(all_files, test_size=0.2, random_state=42)
+    
+    _, val_transform = get_transforms()
+    val_dataset = UTKFaceDataset(val_files, transform=val_transform)
+    # Dùng num_workers=0 để tương thích tốt với Windows
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=64, shuffle=False, num_workers=0)
 
-X_train,X_test,y_train,y_test = train_test_split(
-    X,y,
-    test_size=0.2,
-    random_state=42,
-    stratify=y
-)
+    model = build_model().to(DEVICE)
+    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
+    model.eval()
 
-model = load_model(MODEL_PATH)
+    all_preds = []
+    all_labels = []
+    all_probs = []
 
-test_gen = AgeDataGenerator(X_test, y_test, batch_size=32, shuffle=False)
-loss, accuracy = model.evaluate(test_gen)
+    print("Đang đánh giá trên tập Validation...")
+    with torch.no_grad():
+        for images, labels in tqdm(val_loader):
+            images, labels = images.to(DEVICE), labels.to(DEVICE)
+            outputs = model(images)
+            probs = torch.softmax(outputs, dim=1)
+            _, preds = torch.max(outputs, 1)
+            
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+            all_probs.extend(probs.cpu().numpy())
 
-print(f"Loss: {loss:.4f}")
-print(f"Accuracy: {accuracy*100:.2f}%")
+    all_labels = np.array(all_labels)
+    all_preds = np.array(all_preds)
+    all_probs = np.array(all_probs)
 
-print("Đang tạo dự đoán để vẽ biểu đồ...")
-preds = model.predict(test_gen)
-pred_classes = np.argmax(preds, axis=1)
+    group_names = [AGE_GROUPS[i] for i in range(NUM_CLASSES)]
+    print("\n--- Classification Report ---")
+    print(classification_report(all_labels, all_preds, target_names=group_names))
 
-# Tên nhóm tuổi (ngắn gọn cho biểu đồ)
-group_names = [AGE_GROUPS[i] for i in range(NUM_CLASSES)]
+    # Confusion Matrix
+    cm = confusion_matrix(all_labels, all_preds)
+    fig, ax = plt.subplots(figsize=(8, 6))
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=group_names)
+    disp.plot(ax=ax, cmap='Blues', values_format='d')
+    plt.title('Confusion Matrix')
+    plt.tight_layout()
+    plt.savefig(os.path.join(RESULTS_DIR, "evaluate_confusion_matrix.png"))
+    plt.close()
 
-# Classification Report
-print("\n--- Classification Report ---")
-print(classification_report(y_test, pred_classes, target_names=group_names))
+    # ROC Curve
+    y_test_bin = label_binarize(all_labels, classes=range(NUM_CLASSES))
+    fpr = dict()
+    tpr = dict()
+    roc_auc = dict()
 
-# 1. Vẽ Confusion Matrix
-cm = confusion_matrix(y_test, pred_classes)
-fig, ax = plt.subplots(figsize=(10, 8))
-disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=group_names)
-disp.plot(ax=ax, cmap='Blues', values_format='d')
-plt.title('Ma trận nhầm lẫn (Confusion Matrix)')
-plt.xticks(rotation=30, ha='right')
-plt.tight_layout()
-plt.savefig(os.path.join(RESULTS_DIR, "evaluate_confusion_matrix.png"))
-plt.close()
+    for i in range(NUM_CLASSES):
+        fpr[i], tpr[i], _ = roc_curve(y_test_bin[:, i], all_probs[:, i])
+        roc_auc[i] = auc(fpr[i], tpr[i])
 
-# 2. Vẽ biểu đồ phân phối dự đoán đúng/sai theo nhóm tuổi
-correct = (pred_classes == y_test)
-correct_counts = [np.sum(correct[y_test == i]) for i in range(NUM_CLASSES)]
-total_counts = [np.sum(y_test == i) for i in range(NUM_CLASSES)]
-wrong_counts = [total_counts[i] - correct_counts[i] for i in range(NUM_CLASSES)]
+    plt.figure(figsize=(10, 8))
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c']
+    for i, color in zip(range(NUM_CLASSES), colors):
+        plt.plot(fpr[i], tpr[i], color=color, lw=2,
+                 label=f'ROC {group_names[i]} (AUC = {roc_auc[i]:0.2f})')
 
-x_pos = np.arange(NUM_CLASSES)
-width = 0.35
+    plt.plot([0, 1], [0, 1], 'k--', lw=2)
+    plt.xlabel('False Positive Rate (FPR)')
+    plt.ylabel('True Positive Rate (TPR)')
+    plt.title('ROC Curve')
+    plt.legend(loc="lower right")
+    plt.grid(True)
+    plt.savefig(os.path.join(RESULTS_DIR, "evaluate_roc_curve.png"))
+    plt.close()
 
-fig, ax = plt.subplots(figsize=(10, 6))
-bars1 = ax.bar(x_pos - width/2, correct_counts, width, label='Đúng', color='#2ca02c')
-bars2 = ax.bar(x_pos + width/2, wrong_counts, width, label='Sai', color='#d62728')
-ax.set_xlabel('Nhóm tuổi')
-ax.set_ylabel('Số lượng ảnh')
-ax.set_title('Phân phối dự đoán Đúng/Sai theo nhóm tuổi')
-ax.set_xticks(x_pos)
-ax.set_xticklabels(group_names, rotation=30, ha='right')
-ax.legend()
-ax.grid(True, linestyle='--', alpha=0.6, axis='y')
-plt.tight_layout()
-plt.savefig(os.path.join(RESULTS_DIR, "evaluate_accuracy_per_group.png"))
-plt.close()
+    print(f"Đã lưu các biểu đồ đánh giá tại: {RESULTS_DIR}")
 
-# 3. Vẽ đường cong ROC và tính AUC (Multi-class)
-print("Đang tính toán và vẽ đường cong ROC (Multi-class)...")
-# Binarize nhãn thực tế
-y_test_bin = label_binarize(y_test, classes=range(NUM_CLASSES))
-
-fpr = dict()
-tpr = dict()
-roc_auc = dict()
-
-# Tính ROC và AUC cho từng nhóm tuổi
-for i in range(NUM_CLASSES):
-    fpr[i], tpr[i], _ = roc_curve(y_test_bin[:, i], preds[:, i])
-    roc_auc[i] = auc(fpr[i], tpr[i])
-
-# Vẽ đồ thị ROC
-plt.figure(figsize=(10, 8))
-colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
-for i, color in zip(range(NUM_CLASSES), colors):
-    plt.plot(fpr[i], tpr[i], color=color, lw=2,
-             label=f'ROC {group_names[i]} (AUC = {roc_auc[i]:0.2f})')
-
-plt.plot([0, 1], [0, 1], 'k--', lw=2) # Đường chéo ngẫu nhiên
-plt.xlim([0.0, 1.0])
-plt.ylim([0.0, 1.05])
-plt.xlabel('False Positive Rate (FPR)')
-plt.ylabel('True Positive Rate (TPR)')
-plt.title('Đường cong ROC và AUC cho 6 Nhóm tuổi')
-plt.legend(loc="lower right")
-plt.grid(True, linestyle='--', alpha=0.6)
-plt.savefig(os.path.join(RESULTS_DIR, "evaluate_roc_curve.png"))
-plt.close()
-
-print(f"Đã lưu các biểu đồ phân tích (bao gồm ROC/AUC) vào thư mục: {RESULTS_DIR}")
+if __name__ == "__main__":
+    evaluate_model()

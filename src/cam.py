@@ -1,93 +1,88 @@
 import os
 import sys
 import cv2
+import torch
 import numpy as np
-from tensorflow.keras.models import load_model
-from tensorflow.keras.applications.resnet50 import preprocess_input
+from PIL import Image
+from torchvision import transforms
 
-# Định nghĩa nhóm tuổi (đồng bộ với dataset_loader.py)
-AGE_GROUPS = {
-    0: "0-2 Em be",
-    1: "3-12 Tre em",
-    2: "13-18 Vi thanh nien",
-    3: "19-35 Thanh nien",
-    4: "36-55 Trung nien",
-    5: "55+ Nguoi cao tuoi",
-}
+from config import BASE_DIR, MODEL_DIR, DEVICE, AGE_GROUPS
+from model import build_model
 
-# Đường dẫn tuyệt đối dựa trên vị trí file cam.py
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(BASE_DIR, "models", "best_resnet_age_model.h5")
+def run_cam():
+    MODEL_PATH = os.path.join(MODEL_DIR, "best_resnet50_utkface.pth")
+    if not os.path.exists(MODEL_PATH):
+        print(f"Không tìm thấy model tại {MODEL_PATH}")
+        return
 
-IMG_SIZE = 224  # Đồng bộ với kích thước model đã huấn luyện
+    print("Đang tải model...")
+    model = build_model().to(DEVICE)
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+    model.eval()
+    print("Đã tải model thành công!")
 
-# Khởi tạo bộ phát hiện khuôn mặt Haar Cascade
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    cap = cv2.VideoCapture(0)
 
-print("Đang tải model...")
-model = load_model(MODEL_PATH)
-print("Đã tải model thành công!")
+    if not cap.isOpened():
+        print("Lỗi: Không thể mở camera!")
+        sys.exit(1)
 
-cap = cv2.VideoCapture(0)
+    print("Nhấn ESC để thoát.")
 
-if not cap.isOpened():
-    print("Lỗi: Không thể mở camera!")
-    sys.exit(1)
+    val_transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
 
-print("Nhấn ESC để thoát.")
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("Lỗi: Không thể đọc frame từ camera!")
+            break
 
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        print("Lỗi: Không thể đọc frame từ camera!")
-        break
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
 
-    # Phát hiện khuôn mặt
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+        if len(faces) > 0:
+            for (x, y, w, h) in faces:
+                pad = int(0.2 * max(w, h))
+                y1 = max(0, y - pad)
+                y2 = min(frame.shape[0], y + h + pad)
+                x1 = max(0, x - pad)
+                x2 = min(frame.shape[1], x + w + pad)
+                face_img = frame[y1:y2, x1:x2]
 
-    if len(faces) > 0:
-        for (x, y, w, h) in faces:
-            # Mở rộng vùng cắt thêm 20% để lấy thêm context (trán, cằm)
-            pad = int(0.2 * max(w, h))
-            y1 = max(0, y - pad)
-            y2 = min(frame.shape[0], y + h + pad)
-            x1 = max(0, x - pad)
-            x2 = min(frame.shape[1], x + w + pad)
-            face_img = frame[y1:y2, x1:x2]
+                face_rgb = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
+                pil_img = Image.fromarray(face_rgb)
+                
+                input_tensor = val_transform(pil_img).unsqueeze(0).to(DEVICE)
 
-            # Pipeline đồng bộ với predict.py: cvtColor → Downsample → Resize → preprocess
-            face_rgb = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
-            h_c, w_c = face_rgb.shape[:2]
-            if max(h_c, w_c) > 150:
-                face_rgb = cv2.resize(face_rgb, (100, 100), interpolation=cv2.INTER_LINEAR)
-            face_rgb = cv2.resize(face_rgb, (IMG_SIZE, IMG_SIZE), interpolation=cv2.INTER_LINEAR)
-            face_rgb = preprocess_input(face_rgb.astype(np.float32))
-            face_input = np.expand_dims(face_rgb, axis=0)
+                with torch.no_grad():
+                    outputs = model(input_tensor)
+                    probs = torch.softmax(outputs, dim=1)[0].cpu().numpy()
+                    class_idx = np.argmax(probs)
+                    confidence = probs[class_idx] * 100
+                    group_name = AGE_GROUPS[class_idx]
 
-            pred = model.predict(face_input, verbose=0)
-            class_idx = np.argmax(pred[0])
-            confidence = pred[0][class_idx] * 100
-            group_name = AGE_GROUPS[class_idx]
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                label = f"{group_name} ({confidence:.0f}%)"
+                label_y = y - 10 if y - 10 > 10 else y + h + 25
+                cv2.putText(frame, label, (x, label_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        else:
+            cv2.putText(frame, "Khong phat hien khuon mat",
+                        (20, 40), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.8, (0, 0, 255), 2)
 
-            # Vẽ khung chữ nhật quanh khuôn mặt
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        cv2.imshow("Age Classification", frame)
 
-            # Hiển thị nhãn nhóm tuổi phía trên khung mặt
-            label = f"{group_name} ({confidence:.0f}%)"
-            label_y = y - 10 if y - 10 > 10 else y + h + 25
-            cv2.putText(frame, label, (x, label_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-    else:
-        # Không phát hiện khuôn mặt — hiển thị thông báo
-        cv2.putText(frame, "Khong phat hien khuon mat",
-                    (20, 40), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.8, (0, 0, 255), 2)
+        if cv2.waitKey(1) == 27:
+            break
 
-    cv2.imshow("Age Classification", frame)
+    cap.release()
+    cv2.destroyAllWindows()
 
-    if cv2.waitKey(1) == 27:
-        break
-
-cap.release()
-cv2.destroyAllWindows()
+if __name__ == "__main__":
+    run_cam()
